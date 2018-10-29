@@ -1,0 +1,230 @@
+#!/usr/bin/env python2
+
+import random
+import numpy as np
+import birl
+import active_utils as autils
+import matplotlib.pyplot as plt
+import active_var_complexreward as active_var
+import sys
+
+
+from copy import deepcopy
+
+
+def place_flowers_rbf():
+
+
+    #true reward should place the flower in center of table away from other objects
+
+
+    centers = np.array([[0.25, 0.75],[0.75, 0.75], [0.25, 0.25], [0.75, 0.25]])
+    obj_weights = np.array([-0.1, -0.1, -0.1, -0.1])
+    abs_weights = np.array([0.0, 0.0, 0.0,
+                            0.0, 0.6, 0.0,
+                            0.0, 0.0, 0.0])
+
+
+    rbf = autils.RbfComplexReward(centers, obj_weights, abs_weights)
+
+    return rbf
+
+
+    #rbf.get_heat_map()
+
+
+def test_placements(true_reward, num_test):
+    test_rbfs = []
+    for i in range(num_test):
+        #generate new centers, but keep weights
+        num_objs = true_reward.num_objects
+        new_centers = np.random.rand(num_objs, 2)
+        obj_weights = true_reward.obj_weights.copy()
+        abs_weights = true_reward.abs_weights.copy()
+        new_rbf = autils.RbfComplexReward(new_centers, obj_weights, abs_weights)
+        test_rbfs.append(new_rbf)
+        #autils.visualize_reward(new_rbf, "test placement")
+    return test_rbfs
+
+
+#return mean and standard deviation of loss over test placements
+def calc_test_reward_loss(test_placements, map_params, visualize=False):
+    losses = []
+    for placement in test_placements:
+        test_config = placement.obj_centers
+        true_params = (placement.obj_weights, placement.abs_weights)
+        ploss = active_var.calculate_policy_loss(test_config, true_params, map_params)
+        if visualize:
+            test_map = autils.RbfComplexReward(test_config, map_params[0], map_params[1])
+            autils.visualize_reward(test_map, "testing with map reward")
+            plt.show()
+        losses.append(ploss)
+    losses = np.array(losses)
+    return np.mean(losses), np.std(losses), np.max(losses)
+
+
+def calc_test_placement_loss(test_placements, map_params, visualize=False):
+    losses = []
+    cnt = 0
+    for placement in test_placements:
+        #print cnt
+        cnt += 1
+        test_config = placement.obj_centers
+        true_params = (placement.obj_weights, placement.abs_weights)
+        ploss = active_var.calculate_placement_loss(test_config, true_params, map_params)
+        if visualize:
+            test_map = autils.RbfComplexReward(test_config, map_params[0], map_params[1])
+            autils.visualize_reward(test_map, "testing with map reward")
+            plt.show()
+        losses.append(ploss)
+    losses = np.array(losses)
+    return np.mean(losses), np.std(losses), np.max(losses)
+
+
+if __name__=="__main__":
+
+
+    #set random seed
+    randseed = int(sys.argv[1])*13
+    random.seed(randseed)
+    np.random.seed(randseed)
+    random_queries = int(sys.argv[2])
+    test_file = "./data/flowers_seed" + str(randseed) + "_random" + str(random_queries) + ".txt"
+    f = open(test_file,"w")
+
+    print f
+
+    query_flag = int(sys.argv[2])
+    if query_flag == 1:
+        random_queries = True
+    else:
+        random_queries = False
+
+
+    num_queries = 10
+    num_test = 10#200
+    num_configs_halucinate = 50
+    alpha = 0.95
+    beta=100.0
+    num_steps = 2500
+    step_std = 0.05
+    burn = 0
+    skip = 25
+
+    #create true reward
+    true_rbf = place_flowers_rbf()
+    #plt.show()
+    #create initial demo
+    best_x, reward = true_rbf.estimate_best_placement()
+    print "demo", best_x
+    #autils.visualize_reward(true_rbf, "spoon reward")
+    #plt.show()
+
+
+    #create test cases
+    test_rbfs = test_placements(true_rbf, num_test)
+    #plt.show()
+    #run birl to get MAP estimate
+    birl = birl.BIRL(true_rbf.num_obj_weights, true_rbf.num_abs_weights, beta, num_steps, step_std, burn, skip)
+    birl.add_demonstration(true_rbf.obj_centers, best_x)
+    birl.run_inference()
+
+
+    #print out the map reward weights
+    mean_obj_wts, mean_abs_wts = birl.get_map_params()
+    print "obj weights", mean_obj_wts
+    print "abs weights", mean_abs_wts
+    ave_loss, std_loss, max_loss = calc_test_placement_loss(test_rbfs, birl.get_map_params(), False)
+    f.write("placement loss,{},{},{}\n".format(ave_loss, std_loss, max_loss))
+    print "placement loss:", ave_loss, std_loss, max_loss
+    print "reward diff:", np.linalg.norm(true_rbf.obj_weights - mean_obj_wts), np.linalg.norm(true_rbf.abs_weights - mean_abs_wts)
+
+
+    #write out data for first demo
+    query_file = "./data/flowers_seed" + str(randseed) + "_random" + str(random_queries) + "_demo0.txt"
+    queryf = open(query_file,"w")
+    queryf.write("#query\n")
+    for conf in true_rbf.obj_centers:
+        queryf.write("{},{}\n".format(conf[0],conf[1]))
+
+    queryf.write("#demo\n")
+    queryf.write("{},{}\n".format(best_x[0], best_x[1]))
+
+    queryf.write("#obj weights\n")
+    for i in range(len(mean_obj_wts)-1):
+        queryf.write(str(mean_obj_wts[i]) + ",")
+    queryf.write(str(mean_obj_wts[-1]) + "\n")
+
+    queryf.write("#abs weights\n")
+    for i in range(len(mean_abs_wts)-1):
+        queryf.write(str(mean_abs_wts[i]) + ",")
+    queryf.write(str(mean_abs_wts[-1]) + "\n")
+    queryf.close()
+
+    #run activeVaR query algorithm
+    for i in range(num_queries):
+        query_file = "./data/flowers_seed" + str(randseed) + "_random" + str(random_queries) + "_demo" + str(i+1) + ".txt"
+        queryf = open(query_file,"w")
+        print "---------------iteration", i
+        #run active VaR configuration queries
+        query_config, max_var, query_rbf = active_var.find_max_placement_var_config(true_rbf.num_objects, birl, num_configs_halucinate, alpha, random_queries)
+        print "query", query_config
+        queryf.write("#query\n")
+        for conf in query_config:
+            queryf.write("{},{}\n".format(conf[0],conf[1]))
+        obj_var, abs_var = query_rbf
+        print(obj_var)
+        print(abs_var)
+
+        queryf.write("#alpha obj weights\n")
+        for i in range(len(obj_var)-1):
+            queryf.write(str(obj_var[i]) + ",")
+        queryf.write(str(obj_var[-1]) + "\n")
+        queryf.write("#alpha abs weights\n")
+        for i in range(len(abs_var)-1):
+            queryf.write(str(abs_var[i]) + ",")
+        queryf.write(str(abs_var[-1]) + "\n")
+
+        print "max var", max_var
+        f.write("var,{}\n".format(max_var))
+        #add optimal demo and rerun birl
+        query_rbf = autils.RbfComplexReward(query_config, true_rbf.obj_weights, true_rbf.abs_weights)
+        demo_x, _ = query_rbf.estimate_best_placement()
+        print "demo", demo_x
+        queryf.write("#demo\n")
+        queryf.write("{},{}\n".format(demo_x[0], demo_x[1]))
+        #autils.visualize_reward(query_rbf, "new query")
+        policy_rbf = autils.RbfComplexReward(query_config, birl.get_map_params()[0], birl.get_map_params()[1])
+        #autils.visualize_reward(policy_rbf, "best guess for new query")
+        #plt.show()
+        birl.add_demonstration(query_config, demo_x)
+        print "birl demos"
+        print birl.demonstrations
+        birl.run_inference()
+
+        #print out the map reward weights
+        mean_obj_wts, mean_abs_wts = birl.get_map_params()
+        print "obj weights", mean_obj_wts
+        print "abs weights", mean_abs_wts
+        queryf.write("#obj weights\n")
+        for i in range(len(mean_obj_wts)-1):
+            queryf.write(str(mean_obj_wts[i]) + ",")
+        queryf.write(str(mean_obj_wts[-1]) + "\n")
+        queryf.write("#abs weights\n")
+        for i in range(len(mean_abs_wts)-1):
+            queryf.write(str(mean_abs_wts[i]) + ",")
+        queryf.write(str(mean_abs_wts[-1]) + "\n")
+
+
+
+        ave_loss, std_loss, max_loss = calc_test_reward_loss(test_rbfs, birl.get_map_params(), False)
+        f.write("policy loss,{},{},{}\n".format(ave_loss, std_loss, max_loss))
+        print "policy loss:", ave_loss, std_loss, max_loss
+        ave_loss, std_loss, max_loss = calc_test_placement_loss(test_rbfs, birl.get_map_params(), False)
+        f.write("placement loss,{},{},{}\n".format(ave_loss, std_loss, max_loss))
+        print "placement loss:", ave_loss, std_loss, max_loss
+        print "reward diff:", np.linalg.norm(true_rbf.obj_weights - mean_obj_wts), np.linalg.norm(true_rbf.abs_weights - mean_abs_wts)
+        queryf.close()
+    f.close()
+
+    #plt.show()
