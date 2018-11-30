@@ -141,7 +141,7 @@ if __name__=="__main__":
     for i in range(num_queries):
         print "---------------iteration", i
         #run active VaR configuration queries
-        query_config, max_var = active_var.find_max_placement_var_config(true_rbf.num_objects, birl, num_configs_halucinate, alpha, random_queries)
+        query_config, max_var, _ = active_var.find_max_placement_var_config(true_rbf.num_objects, birl, num_configs_halucinate, alpha, random_queries)
         print "query", query_config
         print "max var", max_var
         f.write("var,{}\n".format(max_var))
