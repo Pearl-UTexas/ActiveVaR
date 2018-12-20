@@ -9,21 +9,31 @@ import numpy as np
 import matplotlib.pyplot as plt
 class RbfComplexReward():
 
+
     def __init__(self, obj_centers, obj_weights, abs_weights):
+        self.offset = 0.1
+        self.obj_offsets = np.array([[0.0, 0.0],[-self.offset, self.offset],[self.offset, self.offset],
+                                     [-self.offset,-self.offset],[self.offset,-self.offset]])
+        #each object should have 5 weights associated with it
+        #w0 is center weight, w1 is top left, w2 is top right, w3 is bottom left, w4 is bottom right
+        assert(len(obj_centers)*5 == len(obj_weights))
+
+
         self.num_objects = obj_centers.shape[0]
         self.num_obj_weights = len(obj_weights)
         self.num_abs_weights = len(abs_weights)
         self.obj_weights = obj_weights
         self.abs_weights = abs_weights
         self.obj_centers = obj_centers
-        assert(len(obj_centers) == len(obj_weights))
+
+        #need to transform object centers into centers for all rbfs (5 per object)
         self.centers = []
         for center in obj_centers:
-            self.centers.append(center)
+            self.centers.extend(np.ones((5,1))*center + self.obj_offsets)
 
         self.weights = []
         self.weights.extend(obj_weights)
-        self.widths = np.tile(np.array([0.3]),len(obj_centers))
+        self.widths = np.tile(np.array([0.3, 0.1, 0.1, 0.1, 0.1]),len(obj_centers))
 
         #add absolute basis functions too!
         #params for absolute gridding of table 3x3 grid
